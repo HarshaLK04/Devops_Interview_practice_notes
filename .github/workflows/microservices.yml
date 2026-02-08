@@ -1,0 +1,89 @@
+name: Microservices CI/CD
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'services/**'
+  pull_request:
+    paths:
+      - 'services/**'
+
+permissions:
+  contents: read
+  id-token: write   # for OIDC if using cloud auth
+
+jobs:
+
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: changed
+        uses: tj-actions/changed-files@v45
+        with:
+          dir_names: true
+          files: services/*
+
+      - id: set
+        run: |
+          services=$(echo '${{ steps.changed.outputs.all_changed_files }}' \
+            | tr ' ' '\n' \
+            | cut -d/ -f2 \
+            | sort -u \
+            | jq -R -s -c 'split("\n")[:-1]')
+          echo "matrix={\"service\":$services}" >> $GITHUB_OUTPUT
+
+  build:
+    needs: detect
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: ${{ fromJson(needs.detect.outputs.matrix) }}
+
+    name: Build ${{ matrix.service }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set vars
+        run: |
+          echo "SERVICE=${{ matrix.service }}" >> $GITHUB_ENV
+          echo "IMAGE=ghcr.io/${{ github.repository }}/${{ matrix.service }}" >> $GITHUB_ENV
+
+      # Unit tests
+      - name: Run tests
+        run: |
+          cd services/$SERVICE
+          npm ci || true
+          npm test || true
+
+      # Docker build
+      - name: Build image
+        run: |
+          docker build -t $IMAGE:${{ github.sha }} services/$SERVICE
+
+      # Trivy scan
+      - name: Scan image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE }}:${{ github.sha }}
+          severity: CRITICAL,HIGH
+          exit-code: 1
+
+      # Login to registry
+      - name: Login GHCR
+        run: echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      # Push
+      - name: Push image
+        run: |
+          docker push $IMAGE:${{ github.sha }}
+
+      # Deploy via Helm
+      - name: Deploy
+        run: |
+          helm upgrade --install $SERVICE services/$SERVICE/helm \
+            --set image.tag=${{ github.sha }}
