@@ -11,7 +11,7 @@ on:
 
 permissions:
   contents: read
-  id-token: write   # for OIDC if using cloud auth
+  id-token: write   # 
 
 jobs:
 
