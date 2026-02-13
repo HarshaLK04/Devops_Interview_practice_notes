@@ -1,0 +1,153 @@
+name: Production CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+############################
+# CI SECTION
+############################
+
+jobs:
+
+  lint:
+    name: Lint + Static Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup runtime
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: lint
+
+    strategy:
+      matrix:
+        node: [18, 20]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-${{ hashFiles('package-lock.json') }}
+
+      - run: npm ci
+      - run: npm test -- --coverage
+
+
+  build:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: test
+
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login $REGISTRY -u ${{ github.actor }} --password-stdin
+
+      - name: Build image
+        run: |
+          docker build -t $REGISTRY/$IMAGE_NAME:${{ github.sha }} .
+
+
+  security_scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          exit-code: 1
+          severity: HIGH,CRITICAL
+
+
+  publish:
+    name: Push Artifact
+    runs-on: ubuntu-latest
+    needs: security_scan
+
+    steps:
+      - name: Login
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login $REGISTRY -u ${{ github.actor }} --password-stdin
+
+      - name: Push
+        run: |
+          docker push $REGISTRY/$IMAGE_NAME:${{ github.sha }}
+
+############################
+# CD SECTION
+############################
+
+  deploy_staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: publish
+    environment: staging
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy via Helm
+        run: |
+          helm upgrade --install app ./helm \
+            --set image.tag=${{ github.sha }} \
+            --namespace staging
+
+
+  smoke_test:
+    name: Smoke Tests
+    runs-on: ubuntu-latest
+    needs: deploy_staging
+
+    steps:
+      - name: Basic health check
+        run: |
+          curl -f https://staging.example.com/health
+
+
+  deploy_prod:
+    name: Production Deploy
+    runs-on: ubuntu-latest
+    needs: smoke_test
+    environment:
+      name: production
+      url: https://app.example.com
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to production
+        run: |
+          helm upgrade --install app ./helm \
+            --set image.tag=${{ github.sha }} \
+            --namespace production

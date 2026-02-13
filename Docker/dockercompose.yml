@@ -1,0 +1,53 @@
+# What Docker Compose actually is
+
+# Suppose your app needs:
+# API
+# database
+# Redis
+# worker
+# nginx
+
+# Without Compose you do:
+
+# docker network create app-net
+# docker run -d postgres
+# docker run -d redis
+# docker run -d api
+# docker run -d worker
+# docker run -d nginx
+
+
+# Five commands. Networking. Env vars. Ports. Volumes. Pain.
+
+# ---------------------------------------------------------------------------------------------------------------------------
+# With Compose:
+
+services:
+  api:
+    build: .
+    ports:
+      - "8080:8080"
+
+  db:
+    image: postgres:16
+
+  redis:
+    image: redis
+
+# docker compose up
+
+# ---------------------------------------------------------------------------------------------------------------------------
+# Debug CrashLoopBackOff?
+
+# Steps:
+
+# kubectl logs pod
+# kubectl describe pod
+# kubectl exec -it
+
+# Common causes:
+# bad env vars
+# missing configs
+# OOM
+# wrong command
+# Always inspect events first.
