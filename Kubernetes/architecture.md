@@ -1,0 +1,1 @@
+Suppose I deploy an nginx application with 3 replicas. The request goes to the API server, which stores the configuration in etcd. The scheduler assigns pods to worker nodes. The kubelet starts the containers, and kube-proxy ensures they are accessible over the network. If one pod fails, the controller manager automatically recreates it.
