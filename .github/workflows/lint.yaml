@@ -1,13 +1,12 @@
 jobs:
   test:
-
+    runs-on: ubuntu-latest
     steps:
-
+      - name: Checkout code
+        uses: actions/checkout@v3
       - name: Lint
         run: npm run lint
-
       - name: Unit Test
         run: npm test
-
       - name: Integration Test
         run: npm run integration-test
